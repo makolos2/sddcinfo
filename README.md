@@ -11,7 +11,7 @@ Requires python 2.7 with modules:
 
 # Usage
 ```
-usage: sddcinfo.py [-h] [-s SDDCID] [-W WRITESLACK] [-n] orgid refreshtoken
+usage: sddcinfo.py [-h] [-s SDDCID] [-W SLACKURL] [-n] orgid refreshtoken
 
 Get the summary and consumption info for a VMC Org.
 
@@ -25,9 +25,9 @@ optional arguments:
   -s SDDCID, --sddcid SDDCID
                         Optionally provide an SDDC ID. If omitted, all SDDCs
                         in the Org will be reported
-  -W WRITESLACK, --writeslack WRITESLACK
+  -W SLACKURL, --writeslack SLACKURL
                         Optionally provide a slack webhook URL and output a
-                        slack-formatted message to the webhook.
+                        slack-formatted message (using mrkdwn) to the webhook.
   -n, --networks        Include network segment and DX advertisement details
                         (displayed in the console output only).
 ```
