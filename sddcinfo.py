@@ -3,6 +3,10 @@
 #  VMware Cloud on AWS Org / SDDC real-time reporting tool
 #
 # Change Log
+# V 2.2 - Aug. 18, 2020
+#       - Added detection of multiple vR appliances for DRaaS at scale, and report the detected number along with the SRM status
+#       - Added checks for the presence of networking information to avoid causing an error when no data was returned by the API.
+#
 # V 2.1 - May 4, 2020
 # Added support for printing network info for SDDCs by adding the -n flag.
 #       - Prints list of compute segments and their type
@@ -76,24 +80,34 @@ else:
 for sddc in sddcjson:
     if len(sddc)<1:
         continue
+    #If SDDC is in FAILED status, let's print only that it's in a failed state and skip the rest
+    if sddc["sddc_state"]=="FAILED":
+        sddc_id = sddc["resource_config"]["sddc_id"].encode("ascii")
+        print ("SDDC_ID %s is in a FAILED state") %(sddc_id)
+        if args.writeslack:
+            slackmsg += ", {\"type\": \"context\", \"elements\": [{ \"type\": \"mrkdwn\", \"text\": \"*FAILED SDDC :* %s\\nD\\n\"}]},{\"type\": \"divider\" }" %(sddc_id)
+        continue
     # Get user Public IPs assigned
     publicipurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/cloud-service/api/v1/public-ips/".encode("ascii")
     publicipresp = requests.get(publicipurl,headers=headers,data=payload)
-    publicipjson = json.loads(publicipresp.text)
+    if publicipresp.status_code == 200:
+        publicipjson = json.loads(publicipresp.text)
     if args.networks:
         # Get Network segments
         segmentsurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/policy/api/v1/infra/tier-1s/cgw/segments".encode("ascii")
         segmentsresp = requests.get(segmentsurl,headers=headers,data=payload)
-        segmentsjson = json.loads(segmentsresp.text)
+        if segmentsresp.status_code == 200:
+            segmentsjson = json.loads(segmentsresp.text)
         # Get Learned routes
         learnedroutesurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/cloud-service/api/v1/infra/external/routes/learned".encode("ascii")
         learnedroutesresp = requests.get(learnedroutesurl,headers=headers,data=payload)
-        learnedroutesjson = json.loads(learnedroutesresp.text)
+        if learnedroutesresp.status_code == 200:
+            learnedroutesjson = json.loads(learnedroutesresp.text)
         # Get advertised routes
         advroutesurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/cloud-service/api/v1/infra/external/routes/advertised".encode("ascii")
-        print advroutesurl
         advroutesresp = requests.get(advroutesurl,headers=headers,data=payload)
-        advroutesjson = json.loads(advroutesresp.text)
+        if advroutesresp.status_code == 200:
+            advroutesjson = json.loads(advroutesresp.text)
     sddc_name = sddc["name"].encode("utf-8")
     sddc_region = sddc["resource_config"]["region"].encode("ascii")
     sddc_id = sddc["resource_config"]["sddc_id"].encode("ascii")
@@ -167,9 +181,27 @@ for sddc in sddcjson:
             slackmsg += "*HCX* is installed\\n"
     # Check whether any SRM instances exist
     if any(key.startswith("SRM-") for key in sddc["resource_config"]["management_vms"]):
-        print ("DRaaS is installed")
-        if args.writeslack:
-            slackmsg += "*DRaaS* is installed\\n"
+        # Check whether multiple VR instances exist for scale
+        if any(key.startswith("VRS-1") for key in sddc["resource_config"]["management_vms"]):
+            print ("DRaaS is installed - 2 vR appliances")
+            if args.writeslack:
+                slackmsg += "*DRaaS* is installed - 2 vR appliances\\n"
+        elif any(key.startswith("VRS-2") for key in sddc["resource_config"]["management_vms"]):
+            print ("DRaaS is installed - 3 vR appliances")
+            if args.writeslack:
+                slackmsg += "*DRaaS* is installed - 3 vR appliances\\n"
+        elif any(key.startswith("VRS-3") for key in sddc["resource_config"]["management_vms"]):
+            print ("DRaaS is installed - 4 vR appliances")
+            if args.writeslack:
+                slackmsg += "*DRaaS* is installed - 4 vR appliances\\n"
+        elif any(key.startswith("VRS-5") for key in sddc["resource_config"]["management_vms"]):
+            print ("DRaaS is installed - 5 vR appliances")
+            if args.writeslack:
+                slackmsg += "*DRaaS* is installed - 5 vR appliances\\n"
+        else:
+            print ("DRaaS is installed - single vR appliances")
+            if args.writeslack:
+                slackmsg += "*DRaaS* is installed - single vR appliances\\n"
     sddc_hosts=0
     for cluster in sddc_clusters:
         print ("Cluster Name: %s - %s %s Hosts") %(cluster, sddc_clusters[cluster]["instance_type"], sddc_clusters[cluster]["count"])
@@ -190,7 +222,7 @@ for sddc in sddcjson:
 
     if args.networks:
     # Print Network info for SDDC
-        if sddc_networks: 
+        if sddc_networks and (advroutesresp.status_code == 200):
             print ("Compute Segments in SDDC: %s") %(len(sddc_networks))
             if ("routes" in advroutesjson):
                 for adv in advroutesjson["routes"]:
