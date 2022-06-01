@@ -1,8 +1,12 @@
-#  SDDCINFO - v2.1
+#  SDDCINFO - v2.3
 #  By Michael Kolos
 #  VMware Cloud on AWS Org / SDDC real-time reporting tool
 #
 # Change Log
+#
+# V 2.3 - June 1, 2022
+#       - Added the vCenter URL to the output.
+#
 # V 2.2 - Aug. 18, 2020
 #       - Added detection of multiple vR appliances for DRaaS at scale, and report the detected number along with the SRM status
 #       - Added checks for the presence of networking information to avoid causing an error when no data was returned by the API.
@@ -114,6 +118,7 @@ for sddc in sddcjson:
     sddc_cidr = sddc["resource_config"]["agents"][0]["network_cidr"].encode("ascii")
     sddc_version = sddc["resource_config"]["sddc_manifest"]["vmc_internal_version"].encode("ascii")
     sddc_vcuuid = sddc["resource_config"]["vc_instance_id"].encode("ascii")
+    sddc_vcurl = sddc["resource_config"]["vc_url"].encode("ascii")
     sddc_az1 = sddc["resource_config"]["availability_zones"][0].encode("ascii")
     if len(sddc["resource_config"]["availability_zones"])>1:
         sddc_az2 = sddc["resource_config"]["availability_zones"][1].encode("ascii")
@@ -170,9 +175,10 @@ for sddc in sddcjson:
     print ("SDDC CIDR: %s") %(sddc_cidr)
     print ("SDDC Version: %s") %(sddc_version)
     print ("SDDC VC_UUID: %s") %(sddc_vcuuid)
+    print ("SDDC VC URL: %s") %(sddc_vcurl)
     
     if args.writeslack:
-        slackmsg += ", {\"type\": \"context\", \"elements\": [{ \"type\": \"mrkdwn\", \"text\": \"*SDDC Name:* %s\\n*SDDC ID:* %s\\n*SDDC Region:* %s *AZ:* %s\\n*SDDC CIDR:* %s\\n*SDDC Version:* %s\\n*SDDC VC_UUID:* %s\\n" %(sddc_name,sddc_id,sddc_region,sddc_azs,sddc_cidr,sddc_version,sddc_vcuuid)
+        slackmsg += ", {\"type\": \"context\", \"elements\": [{ \"type\": \"mrkdwn\", \"text\": \"*SDDC Name:* %s\\n*SDDC ID:* %s\\n*SDDC Region:* %s *AZ:* %s\\n*SDDC CIDR:* %s\\n*SDDC Version:* %s\\n*SDDC VC_UUID:* %s\\n*SDDC VC URL:* %s\\n" %(sddc_name,sddc_id,sddc_region,sddc_azs,sddc_cidr,sddc_version,sddc_vcuuid,sddc_vcurl)
 
     # Check whether HCX manager entry exists
     if "HCX" in sddc["resource_config"]["management_vms"]: 
