@@ -7,9 +7,10 @@ Can output report to console, or write to a slack webhook.
 Optionally reports on networks and routing advertisement status.
 
 # Installation
-Requires python 2.7 with modules:
-- argparse (https://docs.python.org/2.7/library/argparse.html)
-- operator (https://docs.python.org/2.7/library/operator.html#module-operator)
+Requires python 3.x with modules:
+- argparse (https://docs.python.org/3/library/argparse.html)
+- operator (https://docs.python.org/3/library/operator.html)
+- requests (https://pypi.org/project/requests/)
 
 # Usage
 ```
@@ -35,7 +36,6 @@ optional arguments:
 ```
 
 # Known limitations
-- Need to add support for python3
 - Due to slack message limitations, the current slack format only supports < 33 SDDCs in the slack output. Console output doesn't have this limit. Need to support splitting slack output over multiple messages in this case. Currently slack just drops the message without posting it to the channel.
 - Due to a VMC issue, with 1.8 version SDDCs, the networking advertisement information doesn't work in most cases.
 - Cannot disable console output
