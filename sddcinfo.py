@@ -1,8 +1,13 @@
-#  SDDCINFO - v2.3
+#  SDDCINFO - v2.5
 #  By Michael Kolos
 #  VMware Cloud on AWS Org / SDDC real-time reporting tool
 #
 # Change Log
+#
+# V 2.5 - March 31, 2023
+#       - Changed to support Python v3
+#       - Added detection + reporting status for VCDR recovery SDDC, NFS datastore attached, and NSX advanced add-on.
+#       - Added reporting of Linked VPC, subnet & Managed Prefix-list status for the connected VPC.
 #
 # V 2.3 - June 1, 2022
 #       - Added the vCenter URL to the output.
@@ -47,7 +52,7 @@ args = parser.parse_args()
 
 ### Access Token ###
 authurl = 'https://console.cloud.vmware.com/csp/gateway/am/api/auth/api-tokens/authorize?refresh_token=%s' %(args.refreshtoken)
-headers = {'Accept': 'application/json'}
+headers = {'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded'}
 payload = {}
 authresp = requests.post(authurl,headers=headers,data=payload)
 authjson = json.loads(authresp.text)
@@ -78,7 +83,7 @@ if "resource_config" in sddcjson:
     sddcjson=['',sddcjson]
 else:
     # Since we're returning an org here, get the org_type value too
-    org_type=orgjson["org_type"].encode("ascii")
+    org_type=orgjson["org_type"].encode()
 
 # Iterate through each SDDC's JSON to pull relevent values
 for sddc in sddcjson:
@@ -86,61 +91,69 @@ for sddc in sddcjson:
         continue
     #If SDDC is in FAILED status, let's print only that it's in a failed state and skip the rest
     if sddc["sddc_state"]=="FAILED":
-        sddc_id = sddc["resource_config"]["sddc_id"].encode("ascii")
+        sddc_id = sddc["resource_config"]["sddc_id"].encode()
         print ("SDDC_ID %s is in a FAILED state") %(sddc_id)
         if args.writeslack:
             slackmsg += ", {\"type\": \"context\", \"elements\": [{ \"type\": \"mrkdwn\", \"text\": \"*FAILED SDDC :* %s\\nD\\n\"}]},{\"type\": \"divider\" }" %(sddc_id)
         continue
     # Get user Public IPs assigned
-    publicipurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/cloud-service/api/v1/public-ips/".encode("ascii")
+    publicipurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/cloud-service/api/v1/public-ips/".encode()
     publicipresp = requests.get(publicipurl,headers=headers,data=payload)
     if publicipresp.status_code == 200:
         publicipjson = json.loads(publicipresp.text)
+    vpcurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/cloud-service/api/v1/linked-vpcs/".encode()
+    vpcresp = requests.get(vpcurl,headers=headers,data=payload)
+    if (vpcresp is not None):
+        vpcjson=json.loads(vpcresp.text)
+        sddc_vpc = vpcjson["results"][0]["linked_vpc_addresses"][0].encode() + " Subnet: ".encode() + vpcjson["results"][0]["linked_vpc_subnets"][0]["cidr"].encode()
+        if ("linked_vpc_managed_prefix_list_info" in vpcjson["results"][0]):
+            if (vpcjson["results"][0]["linked_vpc_managed_prefix_list_info"]["managed_prefix_list_mode"]=="ENABLED"):
+                sddc_vpc += " MPL mode enabled".encode()
     if args.networks:
         # Get Network segments
-        segmentsurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/policy/api/v1/infra/tier-1s/cgw/segments".encode("ascii")
+        segmentsurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/policy/api/v1/infra/tier-1s/cgw/segments".encode()
         segmentsresp = requests.get(segmentsurl,headers=headers,data=payload)
         if segmentsresp.status_code == 200:
             segmentsjson = json.loads(segmentsresp.text)
         # Get Learned routes
-        learnedroutesurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/cloud-service/api/v1/infra/external/routes/learned".encode("ascii")
+        learnedroutesurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/cloud-service/api/v1/infra/external/routes/learned".encode()
         learnedroutesresp = requests.get(learnedroutesurl,headers=headers,data=payload)
         if learnedroutesresp.status_code == 200:
             learnedroutesjson = json.loads(learnedroutesresp.text)
         # Get advertised routes
-        advroutesurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode("ascii") + "/cloud-service/api/v1/infra/external/routes/advertised".encode("ascii")
+        advroutesurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/cloud-service/api/v1/infra/external/routes/advertised".encode()
         advroutesresp = requests.get(advroutesurl,headers=headers,data=payload)
         if advroutesresp.status_code == 200:
             advroutesjson = json.loads(advroutesresp.text)
-    sddc_name = sddc["name"].encode("utf-8")
-    sddc_region = sddc["resource_config"]["region"].encode("ascii")
-    sddc_id = sddc["resource_config"]["sddc_id"].encode("ascii")
-    sddc_cidr = sddc["resource_config"]["agents"][0]["network_cidr"].encode("ascii")
-    sddc_version = sddc["resource_config"]["sddc_manifest"]["vmc_internal_version"].encode("ascii")
-    sddc_vcuuid = sddc["resource_config"]["vc_instance_id"].encode("ascii")
-    sddc_vcurl = sddc["resource_config"]["vc_url"].encode("ascii")
-    sddc_az1 = sddc["resource_config"]["availability_zones"][0].encode("ascii")
+    sddc_name = sddc["name"].encode()
+    sddc_region = sddc["resource_config"]["region"].encode()
+    sddc_id = sddc["resource_config"]["sddc_id"].encode()
+    sddc_cidr = sddc["resource_config"]["agents"][0]["network_cidr"].encode()
+    sddc_version = sddc["resource_config"]["sddc_manifest"]["vmc_internal_version"].encode()
+    sddc_vcuuid = sddc["resource_config"]["vc_instance_id"].encode()
+    sddc_vcurl = sddc["resource_config"]["vc_url"].encode()
+    sddc_az1 = sddc["resource_config"]["availability_zones"][0].encode()
     if len(sddc["resource_config"]["availability_zones"])>1:
-        sddc_az2 = sddc["resource_config"]["availability_zones"][1].encode("ascii")
-        sddc_azs=sddc_az1+","+sddc_az2    
+        sddc_az2 = sddc["resource_config"]["availability_zones"][1].encode()
+        sddc_azs=sddc_az1.decode()+","+sddc_az2.decode()    
     else:
-        sddc_azs=sddc_az1    
+        sddc_azs=sddc_az1.decode()    
     if args.networks:
         sddc_networks={}
         for segment in segmentsjson["results"]:
             if "subnets" in segment: 
-                net=segment["subnets"][0]["network"].encode("ascii")
-                type=segment["type"].encode("ascii")
+                net=segment["subnets"][0]["network"].encode()
+                type=segment["type"].encode()
                 if not segment["id"] in ("sddc_vpc_reserved_segment_0", "cross_vpc_reserved_segment_0"):
                     sddc_networks[net]={}
                     sddc_networks[net]["type"]=type
             else:
                 if "type" in segment:
-                    if segment["type"].encode("ascii") == "EXTENDED":
+                    if segment["type"].encode() == "EXTENDED":
                         name=segment["display_name"]
                         sddc_networks[name]={}
                         sddc_networks[name]["type"]="EXTENDED"
-                    if segment["type"].encode("ascii") == "DISCONNECTED":
+                    if segment["type"].encode() == "DISCONNECTED":
                         name=segment["display_name"]
                         sddc_networks[name]={}
                         sddc_networks[name]["type"]="DISCONNECTED"
@@ -152,9 +165,9 @@ for sddc in sddcjson:
         instance_count[sddc_region] = {}
     # Count the number of clusters
     for cluster in sddc["resource_config"]["clusters"]:
-        cluster_name=cluster["cluster_name"].encode("ascii")
+        cluster_name=cluster["cluster_name"].encode()
         sddc_clusters[cluster_name]={}
-        sddc_clusters[cluster_name]["instance_type"] = cluster["esx_host_info"]["instance_type"].encode("ascii")
+        sddc_clusters[cluster_name]["instance_type"] = cluster["esx_host_info"]["instance_type"].encode()
         sddc_clusters[cluster_name]["count"] = 0
         org_clusters+=1
         instance_type=sddc_clusters[cluster_name]["instance_type"]
@@ -168,23 +181,30 @@ for sddc in sddcjson:
                  instance_count[sddc_region][instance_type] = 1
 
     # Print out SDDC Identity Infos
-    print ("SDDC Name: %s" %(sddc_name))
-    print ("SDDC ID: %s") %(sddc_id)
-    print ("SDDC Region: %s") %(sddc_region)
-    print ("SDDC AZ: %s") %(sddc_azs)
-    print ("SDDC CIDR: %s") %(sddc_cidr)
-    print ("SDDC Version: %s") %(sddc_version)
-    print ("SDDC VC_UUID: %s") %(sddc_vcuuid)
-    print ("SDDC VC URL: %s") %(sddc_vcurl)
-    
+    print ("SDDC Name: {0}".format(sddc_name.decode()))
+    print ("SDDC ID: {0}".format(sddc_id.decode()))
+    print ("SDDC Region: {0}".format(sddc_region.decode()))
+    print ("SDDC AZ: {0}".format(sddc_azs))
+    print ("SDDC CIDR: {0}".format(sddc_cidr.decode()))
+    print ("SDDC Version: {0}".format(sddc_version.decode()))
+    print ("SDDC VC_UUID: {0}".format(sddc_vcuuid.decode()))
+    print ("SDDC VC URL: {0}".format(sddc_vcurl.decode()))
+    print ("Linked VPC: {0}".format(sddc_vpc.decode()))
+
     if args.writeslack:
-        slackmsg += ", {\"type\": \"context\", \"elements\": [{ \"type\": \"mrkdwn\", \"text\": \"*SDDC Name:* %s\\n*SDDC ID:* %s\\n*SDDC Region:* %s *AZ:* %s\\n*SDDC CIDR:* %s\\n*SDDC Version:* %s\\n*SDDC VC_UUID:* %s\\n*SDDC VC URL:* %s\\n" %(sddc_name,sddc_id,sddc_region,sddc_azs,sddc_cidr,sddc_version,sddc_vcuuid,sddc_vcurl)
+        slackmsg += ", {\"type\": \"context\", \"elements\": [{ \"type\": \"mrkdwn\", \"text\": \"*SDDC Name:* %s\\n*SDDC ID:* %s\\n*SDDC Region:* %s *AZ:* %s\\n*SDDC CIDR:* %s\\n*SDDC Version:* %s\\n*SDDC VC_UUID:* %s\\n*SDDC VC URL:* %s\\n*Linked VPC:* %s\\n" %(sddc_name,sddc_id,sddc_region,sddc_azs,sddc_cidr,sddc_version,sddc_vcuuid,sddc_vcurl,sddc_vpc)
 
     # Check whether HCX manager entry exists
     if "HCX" in sddc["resource_config"]["management_vms"]: 
         print ("HCX is installed")
         if args.writeslack:
             slackmsg += "*HCX* is installed\\n"
+    #Check state of NSX Advanced Add-on
+    if (sddc["resource_config"]["nsxt_addons"] is not None):
+        if (sddc["resource_config"]["nsxt_addons"]["enable_nsx_advanced_addon"] is True):
+            print ("NSX Advanced Add-On is enabled")
+            if args.writeslack:
+                slackmsg += "*NSX Advanced Add-On* is *enabled*\\n"
     # Check whether any SRM instances exist
     if any(key.startswith("SRM-") for key in sddc["resource_config"]["management_vms"]):
         # Check whether multiple VR instances exist for scale
@@ -208,20 +228,31 @@ for sddc in sddcjson:
             print ("DRaaS is installed - single vR appliances")
             if args.writeslack:
                 slackmsg += "*DRaaS* is installed - single vR appliances\\n"
+    # Check if SDDC is a VCDR recovery SDDC
+    if (sddc["resource_config"]["vpc_info"]["vcdr_enis"] is not None):
+        print ("Enabled as VCDR Recovery SDDC")
+        if args.writeslack:
+            slackmsg += "Enabled as VCDR Recovery SDDC\\n"
+    # Check if NFS datastore attached (Only check if not a VCDR recovery SDDC, since that always has SCFS attached as NFS datastore)
+    elif (sddc["resource_config"]["nfs_mode"] is True):
+        print ("NFS Datastore attached")
+        if args.writeslack:
+            slackmsg += "NFS Datastore attached\\n"
+    
     sddc_hosts=0
     for cluster in sddc_clusters:
-        print ("Cluster Name: %s - %s %s Hosts") %(cluster, sddc_clusters[cluster]["instance_type"], sddc_clusters[cluster]["count"])
+        print ("Cluster Name: {0} - {1} {2} Hosts".format(cluster.decode(), sddc_clusters[cluster]["instance_type"].decode(), sddc_clusters[cluster]["count"]))
         sddc_hosts+=sddc_clusters[cluster]["count"]
         if args.writeslack:
             slackmsg += "*%s* - %s %s Hosts\\n" %(cluster, sddc_clusters[cluster]["instance_type"], sddc_clusters[cluster]["count"])
         org_hosts+=sddc_clusters[cluster]["count"]
     
     if "result_count" in publicipjson:
-        print ("User Public IPs in SDDC: %s\n") %(publicipjson["result_count"])
+        print ("User Public IPs in SDDC: {0}\n".format(publicipjson["result_count"]))
         publiciptot+=publicipjson["result_count"]
         if args.writeslack:
             slackmsg += "*User Public IPs in SDDC:* %s\\n" %(publicipjson["result_count"])
-    print ("Total Hosts in SDDC: %s\n") %(sddc_hosts)
+    print ("Total Hosts in SDDC: {0}\n".format(sddc_hosts))
     if args.writeslack:
         slackmsg += "*Total Hosts in SDDC:* %s\\n\"}]}" %(sddc_hosts)
         slackmsg += ", {\"type\": \"divider\" }"
@@ -229,29 +260,30 @@ for sddc in sddcjson:
     if args.networks:
     # Print Network info for SDDC
         if sddc_networks and (advroutesresp.status_code == 200):
-            print ("Compute Segments in SDDC: %s") %(len(sddc_networks))
+            print ("Compute Segments in SDDC: {0}".format(len(sddc_networks)))
             if ("routes" in advroutesjson):
                 for adv in advroutesjson["routes"]:
-                    if (adv["connectivities"][0]["status"].encode("ascii") == "SUCCEEDED"):
-                        net=adv["destination"].encode("ascii")
-                        path=adv["connectivities"][0]["connectivity_type"].encode("ascii")
+                    if (adv["connectivities"][0]["status"] == "SUCCEEDED"):
+                        net=adv["destination"].encode()
+                        path=adv["connectivities"][0]["connectivity_type"]
                         if net in sddc_networks:
-                            sddc_networks[net]["advertised"]=path
+                            sddc_networks[net]["advertised"]=path.encode()
                         else:
                             sddc_networks[net]={}
-                            sddc_networks[net]["advertised"]=path
-                            sddc_networks[net]["type"]="HCX/MGMT"
+                            sddc_networks[net]["advertised"]=path.encode()
+                            sddc_networks[net]["type"]=b"HCX/MGMT"
                 for net in sorted(sddc_networks):
                     if ("advertised" in sddc_networks[net]):
-                        print ("Network: %-18s Type: %-12s Advertised: %s") %(net, sddc_networks[net]["type"], sddc_networks[net]["advertised"])
+                        print ("Network: {0:<18} Type: {1:<12} Advertised: {2}".format(net.decode(), sddc_networks[net]["type"].decode(), sddc_networks[net]["advertised"].decode()))
                     else:
-                        print ("Network: %-18s Type: %-12s NOT Advertised") %(net, sddc_networks[net]["type"])
+                        print ("Network: {0:<18} Type: {1:<12} NOT Advertised".format(net.decode(), sddc_networks[net]["type"].decode()))
                 for adv in learnedroutesjson["routes"]:
-                    print ("DX Learned Route: %18s Source: %s") %(adv["destination"].encode("ascii"), adv["connectivities"][0]["connectivity_type"].encode("ascii"))
+                    print ("DX Learned Route: {0:<18} Source: {1}".format(adv["destination"], adv["connectivities"][0]["connectivity_type"]))
             else:
-                # If No DX, just lst the compute segments
+                # If No DX, just list the compute segments
                 for net in sorted(sddc_networks):
-                    print ("Network: %-18s Type: %-12s") %(net, sddc_networks[net]["type"])
+                    print ("Network: {0:<18} Type: {1:<12}".format(net, sddc_networks[net]["type"]))
+
     print ("\n")
 
 # Don't print Org totals when a single SDDC was specified
@@ -263,20 +295,20 @@ if not args.sddcid:
     # Instance type/count by region
     for region in instance_count:
         for instance in instance_count[region]:
-            print ("%s has %s %s instances\n") %(region, instance_count[region][instance], instance)
+            print ("{0} has {1} {2} instances\n".format(region.decode(), instance_count[region][instance], instance.decode()))
             if args.writeslack:
                 slackmsg += "*%s* has *%s* *%s* instances\\n" %(region, instance_count[region][instance], instance)
     
     print ("Total Hosts per Region: ")
     for region in region_count:
-       print ("%s has %s total hosts\n") %(region, region_count[region])
+       print ("{0} has {1} total hosts\n".format(region.decode(), region_count[region]))
        if args.writeslack:
            slackmsg += "*%s* has *%s* total hosts\\n" %(region, region_count[region])
-    print ("Total User public IPs in Org: %s") %(publiciptot)
-    print ("Total Hosts in Org: %s") %(org_hosts)
-    print ("Total Clusters in Org: %s") %(org_clusters)
-    print ("Total SDDCs in Org: %s\n\n") %(org_sddcs)
-    print ("Org Type: %s") %(org_type)
+    print ("Total User public IPs in Org: {0}".format(publiciptot))
+    print ("Total Hosts in Org: {0}".format(org_hosts))
+    print ("Total Clusters in Org: {0}".format(org_clusters))
+    print ("Total SDDCs in Org: {0}\n\n".format(org_sddcs))
+    print ("Org Type: {0}".format(org_type.decode()))
 
     if args.writeslack:
         slackmsg += "*Total User public IPs in Org:* %s\\n" %(publiciptot)
