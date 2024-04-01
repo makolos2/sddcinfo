@@ -4,6 +4,9 @@
 #
 # Change Log
 #
+# V 2.6 - April 1, 2024
+#	- Change VPC & Public IP info to be reported only if the -n networking option is specified, as it requires NSX permissions.
+#
 # V 2.5 - March 31, 2023
 #       - Changed to support Python v3
 #       - Added detection + reporting status for VCDR recovery SDDC, NFS datastore attached, and NSX advanced add-on.
@@ -47,7 +50,7 @@ parser.add_argument('orgid', help="the long ORG_ID to report on")
 parser.add_argument('refreshtoken', help="a refresh token that has VMC administrator permissions on the Org supplied")
 parser.add_argument('-s','--sddcid', help="Optionally provide an SDDC ID.  If omitted, all SDDCs in the Org will be reported")
 parser.add_argument('-W','--writeslack', help="Optionally provide a slack webhook URL and output a slack-formatted message to the webhook.")
-parser.add_argument('-n','--networks', action="store_true", help="Include network segment and DX advertisement details in the console output only.")
+parser.add_argument('-n','--networks', action="store_true", help="Include network segment and DX advertisement details in the console output only. Requires NSX access")
 args = parser.parse_args()
 
 ### Access Token ###
@@ -101,15 +104,16 @@ for sddc in sddcjson:
     publicipresp = requests.get(publicipurl,headers=headers,data=payload)
     if publicipresp.status_code == 200:
         publicipjson = json.loads(publicipresp.text)
-    vpcurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/cloud-service/api/v1/linked-vpcs/".encode()
-    vpcresp = requests.get(vpcurl,headers=headers,data=payload)
-    if (vpcresp is not None):
-        vpcjson=json.loads(vpcresp.text)
-        sddc_vpc = vpcjson["results"][0]["linked_vpc_addresses"][0].encode() + " Subnet: ".encode() + vpcjson["results"][0]["linked_vpc_subnets"][0]["cidr"].encode()
-        if ("linked_vpc_managed_prefix_list_info" in vpcjson["results"][0]):
-            if (vpcjson["results"][0]["linked_vpc_managed_prefix_list_info"]["managed_prefix_list_mode"]=="ENABLED"):
-                sddc_vpc += " MPL mode enabled".encode()
     if args.networks:
+        # Get Connected VPC info (requires NSX access)
+        vpcurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/cloud-service/api/v1/linked-vpcs/".encode()
+        vpcresp = requests.get(vpcurl,headers=headers,data=payload)
+        if vpcresp.status_code == 200:
+            vpcjson=json.loads(vpcresp.text)
+            sddc_vpc = vpcjson["results"][0]["linked_vpc_addresses"][0].encode() + " Subnet: ".encode() + vpcjson["results"][0]["linked_vpc_subnets"][0]["cidr"].encode()
+            if ("linked_vpc_managed_prefix_list_info" in vpcjson["results"][0]):
+                if (vpcjson["results"][0]["linked_vpc_managed_prefix_list_info"]["managed_prefix_list_mode"]=="ENABLED"):
+                    sddc_vpc += " MPL mode enabled".encode()
         # Get Network segments
         segmentsurl = sddc["resource_config"]["nsx_api_public_endpoint_url"].encode() + "/policy/api/v1/infra/tier-1s/cgw/segments".encode()
         segmentsresp = requests.get(segmentsurl,headers=headers,data=payload)
@@ -138,7 +142,7 @@ for sddc in sddcjson:
         sddc_azs=sddc_az1.decode()+","+sddc_az2.decode()    
     else:
         sddc_azs=sddc_az1.decode()    
-    if args.networks:
+    if args.networks and (segmentsresp.status_code == 200):
         sddc_networks={}
         for segment in segmentsjson["results"]:
             if "subnets" in segment: 
@@ -189,7 +193,8 @@ for sddc in sddcjson:
     print ("SDDC Version: {0}".format(sddc_version.decode()))
     print ("SDDC VC_UUID: {0}".format(sddc_vcuuid.decode()))
     print ("SDDC VC URL: {0}".format(sddc_vcurl.decode()))
-    print ("Linked VPC: {0}".format(sddc_vpc.decode()))
+    if vpcresp.status_code == 200:
+        print ("Linked VPC: {0}".format(sddc_vpc.decode()))
 
     if args.writeslack:
         slackmsg += ", {\"type\": \"context\", \"elements\": [{ \"type\": \"mrkdwn\", \"text\": \"*SDDC Name:* %s\\n*SDDC ID:* %s\\n*SDDC Region:* %s *AZ:* %s\\n*SDDC CIDR:* %s\\n*SDDC Version:* %s\\n*SDDC VC_UUID:* %s\\n*SDDC VC URL:* %s\\n*Linked VPC:* %s\\n" %(sddc_name,sddc_id,sddc_region,sddc_azs,sddc_cidr,sddc_version,sddc_vcuuid,sddc_vcurl,sddc_vpc)
@@ -246,12 +251,13 @@ for sddc in sddcjson:
         if args.writeslack:
             slackmsg += "*%s* - %s %s Hosts\\n" %(cluster, sddc_clusters[cluster]["instance_type"], sddc_clusters[cluster]["count"])
         org_hosts+=sddc_clusters[cluster]["count"]
-    
-    if "result_count" in publicipjson:
-        print ("User Public IPs in SDDC: {0}\n".format(publicipjson["result_count"]))
-        publiciptot+=publicipjson["result_count"]
-        if args.writeslack:
-            slackmsg += "*User Public IPs in SDDC:* %s\\n" %(publicipjson["result_count"])
+
+    if publicipresp.status_code == 200:
+        if "result_count" in publicipjson:
+            print ("User Public IPs in SDDC: {0}\n".format(publicipjson["result_count"]))
+            publiciptot+=publicipjson["result_count"]
+            if args.writeslack:
+                slackmsg += "*User Public IPs in SDDC:* %s\\n" %(publicipjson["result_count"])
     print ("Total Hosts in SDDC: {0}\n".format(sddc_hosts))
     if args.writeslack:
         slackmsg += "*Total Hosts in SDDC:* %s\\n\"}]}" %(sddc_hosts)
@@ -259,8 +265,9 @@ for sddc in sddcjson:
 
     if args.networks:
     # Print Network info for SDDC
-        if sddc_networks and (advroutesresp.status_code == 200):
+        if segmentsresp.status_code == 200:
             print ("Compute Segments in SDDC: {0}".format(len(sddc_networks)))
+        if advroutesresp.status_code == 200:
             if ("routes" in advroutesjson):
                 for adv in advroutesjson["routes"]:
                     if (adv["connectivities"][0]["status"] == "SUCCEEDED"):
